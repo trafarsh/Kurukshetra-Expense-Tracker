@@ -1,0 +1,71 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Reusable function to check if user is signed in and has an @skcet.ac.in email or is the dev
+    function isWhitelistedDomain() {
+      return request.auth != null && (
+        request.auth.token.email.matches('.*@skcet\\.ac\\.in$') || 
+        request.auth.token.email == 'mohamedarshad1507@gmail.com'
+      );
+    }
+
+    // Reusable function to check if the user is an admin
+    // It reads their document from the members collection
+    function isAdmin() {
+      return isWhitelistedDomain() && (
+        get(/databases/$(database)/documents/members/$(request.auth.token.email)).data.role == 'admin' ||
+        request.auth.token.email == 'mohamedarshad1507@gmail.com'
+      );
+    }
+
+    // Members collection
+    match /members/{email} {
+      // Anyone logged in with valid domain can read all members
+      allow read: if isWhitelistedDomain();
+      // Only admins can create, update, delete members
+      allow write: if isAdmin();
+    }
+
+    // Categories collection
+    match /categories/{categoryId} {
+      allow read: if isWhitelistedDomain();
+      allow write: if isAdmin();
+    }
+
+    // Transactions (Common pool ledger)
+    match /transactions/{transactionId} {
+      allow read: if isWhitelistedDomain();
+      allow write: if isAdmin();
+    }
+
+    // Dues Payments (Individual tracking)
+    match /dues_payments/{paymentId} {
+      allow read: if isWhitelistedDomain();
+      allow write: if isAdmin();
+    }
+
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read, update: if isWhitelistedDomain() && resource.data.userEmail == request.auth.token.email;
+      allow create, delete: if isAdmin();
+    }
+
+    // Deadlines
+    match /deadlines/{deadlineId} {
+      allow read: if isWhitelistedDomain();
+      allow write: if isAdmin();
+    }
+
+    // Audit Logs (History)
+    match /audit_logs/{logId} {
+      // Anyone logged in can create a log (triggered by their actions)
+      allow create: if isWhitelistedDomain();
+      // Only admins can read the logs
+      allow read: if isAdmin();
+      // ABSOLUTELY NO ONE can edit or delete a log once created
+      allow update, delete: if false;
+    }
+  }
+}
