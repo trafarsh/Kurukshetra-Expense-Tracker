@@ -58,6 +58,12 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Team Progress Timeline
+    match /teamProgress/{progressId} {
+      allow read: if isWhitelistedDomain();
+      allow write: if isAdmin();
+    }
+
     // Audit Logs (History)
     match /audit_logs/{logId} {
       // Anyone logged in can create a log (triggered by their actions)

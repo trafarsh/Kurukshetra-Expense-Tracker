@@ -1,477 +1,275 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useAdmin } from '../hooks/useAdmin';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../firebase';
-import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, setDoc } from 'firebase/firestore';
-import { Button } from '../components/ui/button';
-import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
-import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '../components/ui/table';
-import { Input } from '../components/ui/input';
-import { logAudit } from '../utils/auditLogger';
+import { Navigate } from 'react-router-dom';
+import { PullToRefresh } from '../components/ui/pull-to-refresh';
+import { Skeleton } from '../components/ui/skeleton';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { Users, Tag, Calendar, ShieldAlert, Plus, Trash2, Edit3, X, Save } from 'lucide-react';
 
 export default function Admin() {
-  const { userRole, currentUser } = useAuth();
-  const userEmail = currentUser?.email || 'Unknown';
-  const [members, setMembers] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [newCategory, setNewCategory] = useState('');
+  const { userRole, actualRole } = useAuth();
+  const {
+    members, categories, deadlines, auditLogs, loading, refetch,
+    handleSaveDue, handleAddCategory, handleDeleteCategory, handleSaveCategory,
+    handleAddDeadline, handleDeleteDeadline, handleAddMember, handleRemoveMember
+  } = useAdmin();
   
-  // Deadlines State
-  const [deadlines, setDeadlines] = useState([]);
+  const isDesktop = useMediaQuery('(min-width: 768px)');
+  const [activeTab, setActiveTab] = useState('members'); // members, categories, deadlines, logs
+
+  // Form states
+  const [editingDueId, setEditingDueId] = useState(null);
+  const [dueInput, setDueInput] = useState('');
+  
+  const [editingCatId, setEditingCatId] = useState(null);
+  const [catInput, setCatInput] = useState('');
+  const [newCatInput, setNewCatInput] = useState('');
+  
   const [newDeadlineTitle, setNewDeadlineTitle] = useState('');
   const [newDeadlineDate, setNewDeadlineDate] = useState('');
   const [newDeadlineDesc, setNewDeadlineDesc] = useState('');
 
-  // Audit Logs State
-  const [auditLogs, setAuditLogs] = useState([]);
-
-  // New Member State
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [newMemberRole, setNewMemberRole] = useState('member');
-  
-  // Custom Modal State for Edit Due
-  const [editingDueMember, setEditingDueMember] = useState(null);
-  const [newDueAmount, setNewDueAmount] = useState('');
 
-  // Custom Modal State for Edit Category
-  const [editingCategory, setEditingCategory] = useState(null);
-  const [editedCategoryName, setEditedCategoryName] = useState('');
-  
-  // Seed initial categories if none exist
-  const defaultCategories = ['Chassis', 'Engine', 'Tyres', 'Brakes', 'Steering', 'Transmission', 'Fuel', 'Event Fees', 'Miscellaneous'];
-
-  useEffect(() => {
-    if (userRole === 'admin') {
-      fetchMembers();
-      fetchCategories();
-      fetchDeadlines();
-      fetchAuditLogs();
-    }
-  }, [userRole]);
-
-  async function fetchAuditLogs() {
-    const snap = await getDocs(collection(db, 'audit_logs'));
-    const data = [];
-    snap.forEach(doc => data.push({ id: doc.id, ...doc.data() }));
-    data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-    setAuditLogs(data);
+  if (actualRole !== 'admin') {
+    return <Navigate to="/" replace />;
   }
 
-  async function fetchDeadlines() {
-    const snap = await getDocs(collection(db, 'deadlines'));
-    const data = [];
-    snap.forEach(doc => data.push({ id: doc.id, ...doc.data() }));
-    data.sort((a, b) => new Date(a.date) - new Date(b.date));
-    setDeadlines(data);
-  }
-
-  async function fetchMembers() {
-    const snap = await getDocs(collection(db, 'members'));
-    const data = [];
-    snap.forEach(doc => {
-      if (doc.data().email !== 'mohamedarshad1507@gmail.com') {
-        data.push({ id: doc.id, ...doc.data() });
-      }
-    });
-    setMembers(data);
-  }
-
-  async function fetchCategories() {
-    const snap = await getDocs(collection(db, 'categories'));
-    const data = [];
-    snap.forEach(doc => data.push({ id: doc.id, ...doc.data() }));
-    
-    if (data.length === 0) {
-      // Seed categories
-      for (const cat of defaultCategories) {
-        await addDoc(collection(db, 'categories'), { name: cat });
-      }
-      fetchCategories();
-    } else {
-      setCategories(data);
-    }
-  }
-
-  function openEditDueModal(member) {
-    setEditingDueMember(member);
-    setNewDueAmount(member.totalDue || 0);
-  }
-
-  async function handleSaveDue(e) {
-    e.preventDefault();
-    if (!editingDueMember) return;
-    
-    const val = Number(newDueAmount);
-    if (!isNaN(val)) {
-      await updateDoc(doc(db, 'members', editingDueMember.id), { totalDue: val });
-      
-      // Create notification for the user
-      await addDoc(collection(db, 'notifications'), {
-        userEmail: editingDueMember.id,
-        message: `Admin updated your expected due to ₹${val.toLocaleString()}`,
-        createdAt: new Date().toISOString(),
-        read: false
-      });
-
-      await logAudit(userEmail, 'EDIT_DUE', `Updated expected due for ${editingDueMember.name} to ₹${val}`);
-      setEditingDueMember(null);
-      fetchMembers();
-      fetchAuditLogs();
-    }
-  }
-
-  async function handleAddCategory(e) {
-    e.preventDefault();
-    if (!newCategory.trim()) return;
-    await addDoc(collection(db, 'categories'), { name: newCategory });
-    await logAudit(userEmail, 'ADD_CATEGORY', `Created new category: ${newCategory.trim()}`);
-    setNewCategory('');
-    fetchCategories();
-    fetchAuditLogs();
-  }
-
-  async function handleDeleteCategory(id) {
-    if (window.confirm("Delete this category?")) {
-      await deleteDoc(doc(db, 'categories', id));
-      await logAudit(userEmail, 'DELETE_CATEGORY', `Deleted category ID: ${id}`);
-      fetchCategories();
-      fetchAuditLogs();
-    }
-  }
-
-  function openEditCategoryModal(category) {
-    setEditingCategory(category);
-    setEditedCategoryName(category.name);
-  }
-
-  async function handleSaveCategory(e) {
-    e.preventDefault();
-    if (!editingCategory || !editedCategoryName.trim()) return;
-    
-    await updateDoc(doc(db, 'categories', editingCategory.id), { name: editedCategoryName.trim() });
-    await logAudit(userEmail, 'EDIT_CATEGORY', `Renamed category ${editingCategory.name} to ${editedCategoryName.trim()}`);
-    setEditingCategory(null);
-    fetchCategories();
-    fetchAuditLogs();
-  }
-
-  async function handleAddDeadline(e) {
-    e.preventDefault();
-    if (!newDeadlineTitle.trim() || !newDeadlineDate) return;
-    await addDoc(collection(db, 'deadlines'), {
-      title: newDeadlineTitle.trim(),
-      date: newDeadlineDate,
-      description: newDeadlineDesc.trim()
-    });
-    await logAudit(userEmail, 'ADD_DEADLINE', `Created deadline: ${newDeadlineTitle.trim()}`);
-    setNewDeadlineTitle('');
-    setNewDeadlineDate('');
-    setNewDeadlineDesc('');
-    fetchDeadlines();
-    fetchAuditLogs();
-  }
-
-  async function handleDeleteDeadline(id) {
-    if (window.confirm("Delete this deadline?")) {
-      await deleteDoc(doc(db, 'deadlines', id));
-      await logAudit(userEmail, 'DELETE_DEADLINE', `Deleted deadline ID: ${id}`);
-      fetchDeadlines();
-      fetchAuditLogs();
-    }
-  }
-
-  async function handleAddMember(e) {
-    e.preventDefault();
-    if (!newMemberName.trim() || !newMemberEmail.trim()) return;
-    
-    const emailToSave = newMemberEmail.toLowerCase().trim();
-    await setDoc(doc(db, 'members', emailToSave), {
-      name: newMemberName.trim(),
-      email: emailToSave,
-      role: newMemberRole,
-      totalDue: 0
-    });
-    
-    await logAudit(userEmail, 'ADD_MEMBER', `Added member: ${newMemberName.trim()} (${emailToSave}) as ${newMemberRole}`);
-    setNewMemberName('');
-    setNewMemberEmail('');
-    setNewMemberRole('member');
-    fetchMembers();
-    fetchAuditLogs();
-  }
-
-  async function handleRemoveMember(id) {
-    if (window.confirm("Are you sure you want to remove this member?")) {
-      await deleteDoc(doc(db, 'members', id));
-      await logAudit(userEmail, 'REMOVE_MEMBER', `Removed member: ${id}`);
-      fetchMembers();
-      fetchAuditLogs();
-    }
-  }
-
-  if (userRole !== 'admin') {
-    return <div className="p-8 text-red-500">Access Denied. Admins only.</div>;
+  if (loading) {
+    return (
+      <div className="p-4 space-y-4">
+        <Skeleton className="h-16 w-full rounded-2xl" />
+        <Skeleton className="h-[70vh] w-full rounded-3xl" />
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-8 p-4">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900">Admin Control Panel</h1>
-        <p className="text-muted-foreground text-slate-500 mt-1">Manage members, expected dues, and transaction categories.</p>
-      </div>
+    <PullToRefresh onRefresh={refetch}>
+      <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 pb-20">
+        
+        {/* Header */}
+        <div className="flex items-center gap-4 mb-6">
+          <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 shadow-sm shrink-0">
+            <ShieldAlert className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900">Admin Panel</h1>
+            <p className="text-sm text-slate-500 mt-1">Manage team data and configurations.</p>
+          </div>
+        </div>
 
-      <div className="grid md:grid-cols-2 gap-8">
-        <Card>
-          <CardHeader>
-            <CardTitle>Member Management</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleAddMember} className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-6">
-              <Input 
-                value={newMemberName} 
-                onChange={e => setNewMemberName(e.target.value)} 
-                placeholder="Name" 
-                required 
-              />
-              <Input 
-                type="email"
-                value={newMemberEmail} 
-                onChange={e => setNewMemberEmail(e.target.value)} 
-                placeholder="Email (@skcet.ac.in)" 
-                required 
-              />
-              <select 
-                className="flex h-10 w-full items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-950 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                value={newMemberRole}
-                onChange={e => setNewMemberRole(e.target.value)}
+        {/* Tab Navigation */}
+        <div className="flex overflow-x-auto p-1 bg-slate-100 rounded-2xl snap-x scrollbar-hide">
+          {[
+            { id: 'members', label: 'Members', icon: Users },
+            { id: 'categories', label: 'Categories', icon: Tag },
+            { id: 'deadlines', label: 'Deadlines', icon: Calendar },
+            { id: 'logs', label: 'Audit Logs', icon: ShieldAlert },
+          ].map(tab => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 py-3 px-4 text-sm font-bold rounded-xl transition-all snap-start ${
+                  activeTab === tab.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
               >
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
-              </select>
-              <Button type="submit">Add Member</Button>
-            </form>
+                <Icon className="w-4 h-4" /> {tab.label}
+              </button>
+            )
+          })}
+        </div>
 
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Member</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead className="text-right">Expected Due</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {members.map(m => (
-                  <TableRow key={m.id}>
-                    <TableCell className="font-medium">
-                      <div>{m.name}</div>
-                      <div className="text-xs text-slate-500">{m.email || m.id}</div>
-                    </TableCell>
-                    <TableCell className="capitalize text-xs text-slate-500">{m.role}</TableCell>
-                    <TableCell className="text-right font-bold text-blue-600">₹{(m.totalDue || 0).toLocaleString()}</TableCell>
-                    <TableCell className="text-right space-x-2">
-                      <Button variant="outline" size="sm" onClick={() => openEditDueModal(m)}>Edit Due</Button>
-                      <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleRemoveMember(m.id)}>Remove</Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Categories</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleAddCategory} className="flex gap-2 mb-4">
-              <Input value={newCategory} onChange={e => setNewCategory(e.target.value)} placeholder="New category name..." />
-              <Button type="submit">Add</Button>
-            </form>
-            
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Category Name</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {categories.map(c => (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-medium">{c.name}</TableCell>
-                    <TableCell className="text-right space-x-2">
-                      <Button variant="outline" size="sm" onClick={() => openEditCategoryModal(c)}>Edit</Button>
-                      <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDeleteCategory(c.id)}>Delete</Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-
-        {/* Deadlines Card */}
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle>Deadlines & Milestones</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleAddDeadline} className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-6">
-              <Input 
-                value={newDeadlineTitle} 
-                onChange={e => setNewDeadlineTitle(e.target.value)} 
-                placeholder="Deadline Title" 
-                required 
-              />
-              <Input 
-                type="date"
-                value={newDeadlineDate} 
-                onChange={e => setNewDeadlineDate(e.target.value)} 
-                required 
-              />
-              <Input 
-                value={newDeadlineDesc} 
-                onChange={e => setNewDeadlineDesc(e.target.value)} 
-                placeholder="Short Description" 
-              />
-              <Button type="submit">Add Deadline</Button>
-            </form>
-
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {deadlines.map(d => (
-                  <TableRow key={d.id}>
-                    <TableCell className="font-bold text-slate-800">{d.title}</TableCell>
-                    <TableCell className="text-slate-600">{new Date(d.date).toLocaleDateString()}</TableCell>
-                    <TableCell className="text-slate-500 text-sm">{d.description}</TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleDeleteDeadline(d.id)}>Delete</Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {deadlines.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={4} className="text-center text-slate-500 py-4">No deadlines set.</TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-
-        {/* Activity Audit Log Card */}
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle>Activity Audit Log (History) 🕒</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="max-h-96 overflow-y-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Time</TableHead>
-                    <TableHead>User</TableHead>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Details</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {auditLogs.map(log => (
-                    <TableRow key={log.id}>
-                      <TableCell className="whitespace-nowrap text-xs text-slate-500">
-                        {new Date(log.timestamp).toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-xs font-semibold text-slate-700">{log.userEmail}</TableCell>
-                      <TableCell>
-                        <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                          {log.action}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-sm text-slate-600">{log.details}</TableCell>
-                    </TableRow>
-                  ))}
-                  {auditLogs.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center text-slate-500 py-4">No audit logs found.</TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+        {/* --- MEMBERS TAB --- */}
+        {activeTab === 'members' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+              <h3 className="font-bold text-slate-900 text-lg mb-4">Add Member</h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <input type="text" placeholder="Name" value={newMemberName} onChange={e => setNewMemberName(e.target.value)} className="px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:ring-2 focus:ring-indigo-100 min-h-[44px]" />
+                <input type="email" placeholder="Email (@skcet.ac.in)" value={newMemberEmail} onChange={e => setNewMemberEmail(e.target.value)} className="px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:ring-2 focus:ring-indigo-100 min-h-[44px]" />
+                <select value={newMemberRole} onChange={e => setNewMemberRole(e.target.value)} className="px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium bg-white focus:ring-2 focus:ring-indigo-100 min-h-[44px]">
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <button onClick={() => { handleAddMember(newMemberName, newMemberEmail, newMemberRole); setNewMemberName(''); setNewMemberEmail(''); }} className="bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-colors min-h-[44px]">Add Member</button>
+              </div>
             </div>
-          </CardContent>
-        </Card>
+
+            <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+              {isDesktop ? (
+                <div className="overflow-x-auto p-4">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="py-3 px-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Name</th>
+                        <th className="py-3 px-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Email</th>
+                        <th className="py-3 px-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Role</th>
+                        <th className="py-3 px-4 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Expected Due</th>
+                        <th className="py-3 px-4 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {members.map(m => (
+                        <tr key={m.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                          <td className="py-4 px-4 font-bold text-slate-900">{m.name}</td>
+                          <td className="py-4 px-4 text-sm font-medium text-slate-500">{m.email}</td>
+                          <td className="py-4 px-4"><span className="text-[10px] font-bold uppercase bg-slate-100 text-slate-600 px-2 py-1 rounded-full">{m.role}</span></td>
+                          <td className="py-4 px-4 text-right">
+                            {editingDueId === m.id ? (
+                              <div className="flex items-center justify-end gap-2">
+                                <input type="number" value={dueInput} onChange={e => setDueInput(e.target.value)} className="w-24 px-2 py-1.5 border rounded-lg text-sm text-right font-medium min-h-[36px]" />
+                                <button onClick={() => { handleSaveDue(m, dueInput); setEditingDueId(null); }} className="p-2 bg-emerald-50 text-emerald-600 rounded-lg min-w-[36px] min-h-[36px]"><Check className="w-4 h-4" /></button>
+                                <button onClick={() => setEditingDueId(null)} className="p-2 bg-slate-100 text-slate-500 rounded-lg min-w-[36px] min-h-[36px]"><X className="w-4 h-4" /></button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end gap-3 group">
+                                <span className="font-bold text-slate-700">₹{(m.totalDue || 0).toLocaleString()}</span>
+                                <button onClick={() => { setEditingDueId(m.id); setDueInput(m.totalDue || 0); }} className="text-indigo-600 opacity-0 group-hover:opacity-100 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg hover:bg-indigo-50 transition-all"><Edit3 className="w-4 h-4" /></button>
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-4 px-4 text-right">
+                            <button onClick={() => window.confirm('Remove member?') && handleRemoveMember(m.id)} className="text-slate-400 hover:text-rose-600 min-w-[44px] min-h-[44px]"><Trash2 className="w-4 h-4 ml-auto" /></button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-50">
+                  {members.map(m => (
+                    <div key={m.id} className="p-4 flex flex-col gap-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-sm font-bold text-slate-900">{m.name}</p>
+                          <p className="text-xs text-slate-500">{m.email}</p>
+                        </div>
+                        <span className="text-[9px] font-bold uppercase bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{m.role}</span>
+                      </div>
+                      <div className="flex items-center justify-between mt-2 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <span className="text-xs font-bold text-slate-500 uppercase">Expected Due:</span>
+                        {editingDueId === m.id ? (
+                          <div className="flex items-center gap-2">
+                            <input type="number" value={dueInput} onChange={e => setDueInput(e.target.value)} className="w-20 px-2 py-1 border rounded-md text-sm text-right font-medium min-h-[36px]" />
+                            <button onClick={() => { handleSaveDue(m, dueInput); setEditingDueId(null); }} className="p-1.5 bg-emerald-100 text-emerald-700 rounded-md min-h-[36px] min-w-[36px] flex items-center justify-center"><Check className="w-4 h-4" /></button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900">₹{(m.totalDue || 0).toLocaleString()}</span>
+                            <button onClick={() => { setEditingDueId(m.id); setDueInput(m.totalDue || 0); }} className="text-indigo-600 bg-indigo-50 p-1.5 rounded-md min-h-[36px] min-w-[36px] flex items-center justify-center"><Edit3 className="w-4 h-4" /></button>
+                          </div>
+                        )}
+                      </div>
+                      <button onClick={() => window.confirm('Remove member?') && handleRemoveMember(m.id)} className="text-xs font-bold text-rose-500 hover:text-rose-700 mt-1 self-end min-h-[36px] px-2 flex items-center">Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* --- CATEGORIES TAB --- */}
+        {activeTab === 'categories' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 flex flex-col md:flex-row gap-4">
+              <input type="text" placeholder="New Category Name" value={newCatInput} onChange={e => setNewCatInput(e.target.value)} className="flex-1 px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:ring-2 focus:ring-indigo-100 min-h-[44px]" />
+              <button onClick={() => { handleAddCategory(newCatInput); setNewCatInput(''); }} className="bg-indigo-600 text-white font-bold rounded-xl px-6 min-h-[44px]">Add Category</button>
+            </div>
+            
+            <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden divide-y divide-slate-50">
+              {categories.map(c => (
+                <div key={c.id} className="flex items-center justify-between p-4 hover:bg-slate-50">
+                  {editingCatId === c.id ? (
+                    <div className="flex items-center gap-2 flex-1 mr-4">
+                      <input type="text" value={catInput} onChange={e => setCatInput(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm font-medium min-h-[44px]" />
+                      <button onClick={() => { handleSaveCategory(c.id, c.name, catInput); setEditingCatId(null); }} className="p-2 bg-emerald-50 text-emerald-600 rounded-lg min-h-[44px] min-w-[44px]"><Check className="w-4 h-4" /></button>
+                      <button onClick={() => setEditingCatId(null)} className="p-2 bg-slate-100 text-slate-500 rounded-lg min-h-[44px] min-w-[44px]"><X className="w-4 h-4" /></button>
+                    </div>
+                  ) : (
+                    <span className="font-bold text-slate-900 text-sm">{c.name}</span>
+                  )}
+                  {editingCatId !== c.id && (
+                    <div className="flex gap-2">
+                      <button onClick={() => { setEditingCatId(c.id); setCatInput(c.name); }} className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-50 rounded-lg min-h-[44px] min-w-[44px]"><Edit3 className="w-4 h-4" /></button>
+                      <button onClick={() => window.confirm('Delete category?') && handleDeleteCategory(c.id)} className="p-2 text-slate-400 hover:text-rose-600 bg-rose-50 rounded-lg min-h-[44px] min-w-[44px]"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* --- DEADLINES TAB --- */}
+        {activeTab === 'deadlines' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 space-y-4">
+              <h3 className="font-bold text-slate-900 text-lg">Add Deadline</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input type="text" placeholder="Title" value={newDeadlineTitle} onChange={e => setNewDeadlineTitle(e.target.value)} className="px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:ring-2 focus:ring-indigo-100 min-h-[44px]" />
+                <input type="date" value={newDeadlineDate} onChange={e => setNewDeadlineDate(e.target.value)} className="px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:ring-2 focus:ring-indigo-100 min-h-[44px]" />
+              </div>
+              <textarea placeholder="Description" value={newDeadlineDesc} onChange={e => setNewDeadlineDesc(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:ring-2 focus:ring-indigo-100 resize-none min-h-[44px]" />
+              <button onClick={() => { handleAddDeadline(newDeadlineTitle, newDeadlineDate, newDeadlineDesc); setNewDeadlineTitle(''); setNewDeadlineDate(''); setNewDeadlineDesc(''); }} className="w-full md:w-auto bg-indigo-600 text-white font-bold rounded-xl px-6 min-h-[44px]">Add Deadline</button>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {deadlines.map(d => (
+                <div key={d.id} className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 flex flex-col relative overflow-hidden">
+                  <div className="absolute top-0 right-0 p-3">
+                    <button onClick={() => window.confirm('Delete deadline?') && handleDeleteDeadline(d.id)} className="text-slate-300 hover:text-rose-500 min-h-[44px] min-w-[44px] flex justify-center items-center rounded-full hover:bg-rose-50 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                  <h4 className="font-bold text-slate-900 mb-1 pr-8">{d.title}</h4>
+                  <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-2">{new Date(d.date).toLocaleDateString('en-GB')}</p>
+                  <p className="text-sm text-slate-600 font-medium">{d.description}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* --- LOGS TAB --- */}
+        {activeTab === 'logs' && (
+          <div className="bg-slate-900 rounded-3xl p-4 md:p-6 shadow-sm border border-slate-800 animate-in fade-in duration-300">
+            <h3 className="font-bold text-white text-lg mb-4 flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-indigo-400" />
+              Audit Trail
+            </h3>
+            <div className="space-y-3 font-mono">
+              {auditLogs.length === 0 ? (
+                <p className="text-slate-500 text-sm">No activity recorded.</p>
+              ) : (
+                auditLogs.map(log => (
+                  <div key={log.id} className="bg-slate-800/50 p-3 rounded-xl border border-slate-700/50 text-xs text-slate-300 flex flex-col md:flex-row md:items-center justify-between gap-2">
+                    <div>
+                      <span className="text-indigo-400 font-bold">[{log.action}]</span> 
+                      <span className="text-slate-400 ml-2">{log.userEmail}</span>
+                      <p className="text-slate-200 mt-1">{log.details}</p>
+                    </div>
+                    <span className="text-slate-500 shrink-0">{new Date(log.timestamp).toLocaleString()}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
       </div>
+    </PullToRefresh>
+  );
+}
 
-      {/* Edit Category Modal */}
-      {editingCategory && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <Card className="w-full max-w-sm shadow-2xl border-0">
-            <CardHeader className="border-b bg-slate-50/80 px-6 py-4 flex flex-row items-center justify-between">
-              <CardTitle>Edit Category</CardTitle>
-              <button onClick={() => setEditingCategory(null)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
-            </CardHeader>
-            <form onSubmit={handleSaveCategory} className="p-6 space-y-4">
-              <div>
-                <p className="text-sm text-slate-500 mb-4">
-                  Update name for category <strong className="text-slate-900">{editingCategory.name}</strong>.
-                </p>
-                <label className="text-sm font-semibold text-slate-700 mb-1 block">Category Name</label>
-                <Input 
-                  type="text" 
-                  value={editedCategoryName} 
-                  onChange={(e) => setEditedCategoryName(e.target.value)} 
-                  required 
-                />
-              </div>
-              <div className="flex gap-3 pt-4 border-t">
-                <Button type="button" variant="outline" className="flex-1" onClick={() => setEditingCategory(null)}>Cancel</Button>
-                <Button type="submit" className="flex-1">Save Category</Button>
-              </div>
-            </form>
-          </Card>
-        </div>
-      )}
-
-      {/* Edit Due Modal */}
-      {editingDueMember && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <Card className="w-full max-w-sm shadow-2xl border-0">
-            <CardHeader className="border-b bg-slate-50/80 px-6 py-4 flex flex-row items-center justify-between">
-              <CardTitle>Edit Member Dues</CardTitle>
-              <button onClick={() => setEditingDueMember(null)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
-            </CardHeader>
-            <form onSubmit={handleSaveDue} className="p-6 space-y-4">
-              <div>
-                <p className="text-sm text-slate-500 mb-4">
-                  Update expected due for <strong className="text-slate-900">{editingDueMember.name}</strong>.
-                </p>
-                <label className="text-sm font-semibold text-slate-700 mb-1 block">New Due Amount (₹)</label>
-                <Input 
-                  type="number" 
-                  value={newDueAmount} 
-                  onChange={(e) => setNewDueAmount(e.target.value)} 
-                  required 
-                  min="0"
-                />
-              </div>
-              <div className="flex gap-3 pt-4 border-t">
-                <Button type="button" variant="outline" className="flex-1" onClick={() => setEditingDueMember(null)}>Cancel</Button>
-                <Button type="submit" className="flex-1">Save Dues</Button>
-              </div>
-            </form>
-          </Card>
-        </div>
-      )}
-    </div>
+// Needed icon that wasn't imported
+function Check(props) {
+  return (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
   );
 }

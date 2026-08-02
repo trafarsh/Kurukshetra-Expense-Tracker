@@ -8,6 +8,7 @@ import Ledger from './pages/Ledger';
 import Admin from './pages/Admin';
 import TeamProgress from './pages/TeamProgress';
 import MyDues from './pages/MyDues';
+import Profile from './pages/Profile';
 
 function AppRoutes() {
   return (
@@ -18,6 +19,7 @@ function AppRoutes() {
         <Route path="/ledger" element={<Ledger />} />
         <Route path="/team-progress" element={<TeamProgress />} />
         <Route path="/my-dues" element={<MyDues />} />
+        <Route path="/profile" element={<Profile />} />
         <Route path="/admin" element={<Admin />} />
       </Route>
       {/* Catch all to redirect to home */}
