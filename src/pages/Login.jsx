@@ -3,7 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
-import { GoogleAuthProvider } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
+import { auth } from '../firebase';
 
 export default function Login() {
   const { loginWithGoogle, currentUser } = useAuth();
@@ -26,15 +27,19 @@ export default function Login() {
       
       if (Capacitor.isNativePlatform()) {
         // Native Android: Use @capacitor-firebase/authentication for Custom Tabs flow
-        await FirebaseAuthentication.signInWithGoogle();
-        // The auth state change listener in AuthContext will catch this and trigger the redirect
+        const result = await FirebaseAuthentication.signInWithGoogle();
+        // Sync the native login with the Web JS SDK so Firestore and AuthContext work!
+        if (result.credential?.idToken) {
+           const credential = GoogleAuthProvider.credential(result.credential.idToken);
+           await signInWithCredential(auth, credential);
+        }
       } else {
         // Standard web browser flow
         await loginWithGoogle();
       }
     } catch (err) {
       console.error(err);
-      setError("Failed to log in. Please ensure you use an @skcet.ac.in account and are registered.");
+      setError("Login Error: " + (err.message || JSON.stringify(err)));
     } finally {
       setLoading(false);
     }
